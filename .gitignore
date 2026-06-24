@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.spec
+
+# User data (local only)
+data/inventory.json
+data/images/*
+!data/images/.gitkeep
+data/fonts/
+
+# Secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / tools
+.vscode/
+.idea/
+*.swp
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
