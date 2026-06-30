@@ -37,7 +37,7 @@ def normalize_upc(value: str) -> str | None:
     return None
 
 
-def _barcode_variants(upc: str) -> list[str]:
+def barcode_variants(upc: str) -> list[str]:
     """Return barcode formats commonly used by lookup APIs."""
     variants: list[str] = []
 
@@ -157,7 +157,7 @@ def _try_source(
     lookup: Callable[[str], UPCLookupResult | None],
     upc: str,
 ) -> UPCLookupResult | None:
-    for code in _barcode_variants(upc):
+    for code in barcode_variants(upc):
         result = lookup(code)
         if result:
             result.upc = upc

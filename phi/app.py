@@ -9,6 +9,8 @@ from phi.storage import InventoryStore
 from phi.ui import dialogs
 from phi.ui.item_card import ItemCard
 from phi.ui.item_editor import ItemEditor
+from phi.ui.multi_scan import MultiScanDialog
+from phi.ui.scroll import LocalScrollFrame
 from phi.ui.window_utils import bind_resize_refresh, refresh_layout, schedule_maximize
 
 PAGE_SIZE = 25
@@ -30,6 +32,7 @@ class PHIApp(ctk.CTk):
         self._search_var.trace_add("write", self._on_search_changed)
         self._card_images: dict[str, ctk.CTkImage] = {}
         self._editors: list[ItemEditor] = []
+        self._multi_scans: list[MultiScanDialog] = []
         self._expanded: set[str] = set()
         self._cards: dict[str, ItemCard] = {}
         self._empty_label: ctk.CTkLabel | None = None
@@ -77,10 +80,20 @@ class PHIApp(ctk.CTk):
         self.search_entry.grid(row=0, column=0, sticky="ew", padx=(0, 12))
 
         ctk.CTkButton(
-            toolbar, text="+ Add Item", width=130, height=36, command=self._add_item
-        ).grid(row=0, column=1, sticky="e")
+            toolbar,
+            text="Multi Scan",
+            width=110,
+            height=36,
+            fg_color="#444",
+            hover_color="#555",
+            command=self._multi_scan,
+        ).grid(row=0, column=1, padx=(0, 8))
 
-        self.list_frame = ctk.CTkScrollableFrame(root, label_text="Inventory")
+        ctk.CTkButton(
+            toolbar, text="+ Add Item", width=130, height=36, command=self._add_item
+        ).grid(row=0, column=2, sticky="e")
+
+        self.list_frame = LocalScrollFrame(root, label_text="Inventory")
         self.list_frame.grid(row=2, column=0, sticky="nsew")
         self.list_frame.grid_columnconfigure(0, weight=1)
 
@@ -260,7 +273,7 @@ class PHIApp(ctk.CTk):
 
         if self._empty_label is None:
             self._empty_label = ctk.CTkLabel(
-                self.list_frame,
+                self.list_frame.content,
                 text="No items yet. Click '+ Add Item' to get started.",
                 text_color="gray60",
                 anchor="center",
@@ -297,8 +310,11 @@ class PHIApp(ctk.CTk):
                 card.grid(row_idx)
                 card.update(item, expanded, rebuild_units=False)
             else:
-                self._cards[item.id] = ItemCard(self.list_frame, self, item, row_idx)
+                card = ItemCard(self.list_frame.content, self, item, row_idx)
+                self._cards[item.id] = card
+                self.list_frame.attach_widget(card.frame)
 
+        self.list_frame.refresh_scroll_region()
         self._update_status_bar(filtered_count)
         self._update_pagination(filtered_count)
 
@@ -317,6 +333,7 @@ class PHIApp(ctk.CTk):
         card = self._cards.get(item_id)
         if item and card:
             card.update(item, item_id in self._expanded, rebuild_units=True)
+            self.list_frame.refresh_scroll_region()
 
     def refresh_card_header(self, item_id: str) -> None:
         item = self.store.get_item(item_id)
@@ -361,6 +378,20 @@ class PHIApp(ctk.CTk):
             card.update(item, item_id in self._expanded, rebuild_units=True)
         else:
             self._sync_list(preserve_scroll=True)
+
+    def _open_multi_scan(self, **kwargs) -> MultiScanDialog:
+        dialog = MultiScanDialog(self, self.store, **kwargs)
+
+        def _cleanup(_e=None) -> None:
+            if dialog in self._multi_scans:
+                self._multi_scans.remove(dialog)
+
+        dialog.bind("<Destroy>", _cleanup)
+        self._multi_scans.append(dialog)
+        return dialog
+
+    def _multi_scan(self) -> None:
+        self._open_multi_scan(on_saved=lambda: self._sync_list(preserve_scroll=True))
 
     def _add_item(self) -> None:
         self._open_editor(

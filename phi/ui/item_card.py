@@ -17,7 +17,7 @@ UNIT_SAVE_MS = 400
 
 
 class ItemCard:
-    def __init__(self, parent: ctk.CTkScrollableFrame, app: PHIApp, item: Item, row: int) -> None:
+    def __init__(self, parent: ctk.CTkFrame, app: PHIApp, item: Item, row: int) -> None:
         self.app = app
         self.parent = parent
         self.item_id = item.id
@@ -166,6 +166,7 @@ class ItemCard:
         if expanded:
             self._ensure_panel(item, rebuild_units=rebuild_units)
             self._chevron.configure(text="▼")
+            self.app.list_frame.attach_widget(self.frame)
         else:
             self._destroy_panel()
             self._chevron.configure(text="▶")

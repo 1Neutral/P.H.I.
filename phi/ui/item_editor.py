@@ -60,6 +60,8 @@ class ItemEditor(ctk.CTkToplevel):
         self.grab_set()
         self.focus_force()
         self.lift()
+        if self.is_new:
+            self.after_idle(self._focus_upc_entry)
 
     def _build_ui(self) -> None:
         if self.is_new:
@@ -246,6 +248,23 @@ class ItemEditor(ctk.CTkToplevel):
             self._lookup_btn.configure(state="normal", text="Look up & Add")
             self.upc_entry.configure(state="normal")
 
+    def _focus_upc_entry(self) -> None:
+        if hasattr(self, "upc_entry"):
+            self.upc_entry.focus_set()
+
+    def _handle_existing_upc(self, existing: Item) -> None:
+        if dialogs.ask_yes_no(
+            self,
+            "Already in inventory",
+            f"'{existing.name}' is already tracked with this UPC.\n\n"
+            "Add another unit to that item?",
+        ):
+            existing.units.append(Unit(id=new_id()))
+            self.store.update_item(existing)
+            if self.on_saved:
+                self.on_saved(existing)
+            self.destroy()
+
     def _lookup_upc(self) -> None:
         if not self.is_new or self._lookup_running:
             return
@@ -257,6 +276,11 @@ class ItemEditor(ctk.CTkToplevel):
                 "Invalid UPC",
                 "Enter a valid UPC barcode (8–14 digits).",
             )
+            return
+
+        existing = self.store.find_by_upc(upc)
+        if existing:
+            self._handle_existing_upc(existing)
             return
 
         self._set_lookup_busy(True)
@@ -279,17 +303,7 @@ class ItemEditor(ctk.CTkToplevel):
 
         existing = self.store.find_by_upc(result.upc)
         if existing:
-            if dialogs.ask_yes_no(
-                self,
-                "Already in inventory",
-                f"'{existing.name}' is already tracked with this UPC.\n\n"
-                "Add another unit to that item?",
-            ):
-                existing.units.append(Unit(id=new_id()))
-                self.store.update_item(existing)
-                if self.on_saved:
-                    self.on_saved(existing)
-                self.destroy()
+            self._handle_existing_upc(existing)
             return
 
         location = self._prompt_location_for_upc(result.name)
@@ -303,11 +317,6 @@ class ItemEditor(ctk.CTkToplevel):
         self.store.add_item(item)
         if self.on_saved:
             self.on_saved(item)
-        dialogs.show_info(
-            self,
-            "Item added",
-            f"Added '{item.name}' to inventory.\n(Source: {result.source})",
-        )
         self.destroy()
 
     def _prompt_location_for_upc(self, product_name: str) -> str | None:

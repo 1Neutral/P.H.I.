@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 
 from phi.models import Inventory, Item
+from phi.upc_lookup import barcode_variants
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 INVENTORY_FILE = "inventory.json"
@@ -67,8 +68,9 @@ class InventoryStore:
         return None
 
     def find_by_upc(self, upc: str) -> Item | None:
+        search_variants = set(barcode_variants(upc))
         for item in self._inventory.items:
-            if item.upc and item.upc == upc:
+            if item.upc and set(barcode_variants(item.upc)) & search_variants:
                 return item
         return None
 
