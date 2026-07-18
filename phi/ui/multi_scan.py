@@ -93,7 +93,10 @@ class MultiScanDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             self.container,
-            text="Scan items one after another. Set a location for each item, then save.",
+            text=(
+                "Scan a UPC, then scan its location. Press Enter after each scan "
+                "to move to the next step."
+            ),
             text_color="gray60",
             anchor="w",
             wraplength=680,
@@ -147,11 +150,40 @@ class MultiScanDialog(ctk.CTkToplevel):
         self._save_btn.grid(row=0, column=2)
 
     def _focus_scan_entry(self) -> None:
+        self.upc_entry.select_range(0, "end")
         self.upc_entry.focus_set()
 
-    def _clear_scan_entry(self) -> None:
+    def _clear_scan_entry(self, *, focus: bool = True) -> None:
         self.upc_entry.delete(0, "end")
+        if focus:
+            self._focus_scan_entry()
+
+    def _focus_location(self, line: ScanLine) -> None:
+        entry = line.location_entry
+        row = line.row_frame
+        if entry is None or row is None:
+            return
+
+        def focus() -> None:
+            self.list_scroll.refresh_scroll_region()
+            content_height = self.list_scroll.content.winfo_height()
+            if content_height > 0:
+                self.list_scroll._parent_canvas.yview_moveto(
+                    max(0.0, min(1.0, row.winfo_y() / content_height))
+                )
+            entry.select_range(0, "end")
+            entry.focus_set()
+
+        self.after_idle(focus)
+
+    def _on_location_entered(self, row_id: str) -> str:
+        line = next((line for line in self._lines if line.row_id == row_id), None)
+        if line is None or not self._line_location(line):
+            if line and line.location_entry:
+                line.location_entry.focus_set()
+            return "break"
         self._focus_scan_entry()
+        return "break"
 
     def _find_line(self, upc: str) -> ScanLine | None:
         for line in self._lines:
@@ -180,25 +212,29 @@ class MultiScanDialog(ctk.CTkToplevel):
                 line.count += 1
                 self._refresh_line(line)
             else:
-                self._add_line(
-                    ScanLine(
-                        row_id=new_id(),
-                        upc=upc,
-                        kind="existing",
-                        name=existing.name,
-                        item_id=existing.id,
-                    )
+                line = ScanLine(
+                    row_id=new_id(),
+                    upc=upc,
+                    kind="existing",
+                    name=existing.name,
+                    item_id=existing.id,
                 )
-            self._clear_scan_entry()
+                self._add_line(
+                    line
+                )
+            self._clear_scan_entry(focus=False)
             self._update_summary()
+            self._focus_location(line)
             return
 
         line = self._find_line(upc)
         if line and line.kind in {"new", "pending"}:
             line.count += 1
             self._refresh_line(line)
-            self._clear_scan_entry()
+            self._clear_scan_entry(focus=False)
             self._update_summary()
+            if line.kind == "new":
+                self._focus_location(line)
             return
 
         pending = ScanLine(
@@ -208,7 +244,7 @@ class MultiScanDialog(ctk.CTkToplevel):
             name="Looking up…",
         )
         self._add_line(pending)
-        self._clear_scan_entry()
+        self._clear_scan_entry(focus=False)
         self._update_summary()
         self._start_lookup(pending)
 
@@ -230,6 +266,7 @@ class MultiScanDialog(ctk.CTkToplevel):
             return
 
         existing = self.store.find_by_upc(result.upc if result.found else line.upc)
+        location_line: ScanLine | None = None
         if existing:
             self._remove_line_ui(line)
             self._lines.remove(line)
@@ -237,22 +274,25 @@ class MultiScanDialog(ctk.CTkToplevel):
             if merged and merged.kind == "existing":
                 merged.count += line.count
                 self._refresh_line(merged)
+                location_line = merged
             else:
+                location_line = ScanLine(
+                    row_id=new_id(),
+                    upc=line.upc,
+                    kind="existing",
+                    name=existing.name,
+                    item_id=existing.id,
+                    count=line.count,
+                )
                 self._add_line(
-                    ScanLine(
-                        row_id=new_id(),
-                        upc=line.upc,
-                        kind="existing",
-                        name=existing.name,
-                        item_id=existing.id,
-                        count=line.count,
-                    )
+                    location_line
                 )
         elif result.found:
             line.kind = "new"
             line.name = result.name
             line.result = result
             self._rebuild_line_ui(line)
+            location_line = line
         else:
             line.kind = "error"
             line.name = "Not found"
@@ -261,6 +301,10 @@ class MultiScanDialog(ctk.CTkToplevel):
 
         self._update_summary()
         self._update_save_state()
+        if location_line:
+            self._focus_location(location_line)
+        else:
+            self._focus_scan_entry()
 
     def _add_line(self, line: ScanLine) -> None:
         self._lines.append(line)
@@ -316,6 +360,10 @@ class MultiScanDialog(ctk.CTkToplevel):
                 height=32,
             )
             location_entry.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 8))
+            location_entry.bind(
+                "<Return>",
+                lambda _event, row_id=line.row_id: self._on_location_entered(row_id),
+            )
             initial = ""
             if line.kind == "existing" and line.item_id:
                 initial = self._existing_location(line.item_id)
