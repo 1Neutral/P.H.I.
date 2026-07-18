@@ -1,8 +1,9 @@
-"""Batch UPC scanning dialog — scan many items, then assign a location per item."""
+"""Batch product scanning dialog — scan items and assign their locations."""
 
 from __future__ import annotations
 
 import threading
+import tkinter as tk
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional
 
@@ -13,7 +14,12 @@ from phi.storage import InventoryStore
 from phi.ui import dialogs
 from phi.ui.scroll import LocalScrollFrame
 from phi.ui.window_utils import bind_resize_refresh, refresh_layout, schedule_maximize
-from phi.upc_lookup import UPCLookupResult, lookup_upc, normalize_upc
+from phi.upc_lookup import (
+    UPCLookupResult,
+    lookup_product,
+    normalize_product_code,
+    product_code_label,
+)
 
 ScanKind = Literal["existing", "new", "pending", "error"]
 
@@ -66,6 +72,8 @@ class MultiScanDialog(ctk.CTkToplevel):
         self.on_saved = on_saved
         self._lines: list[ScanLine] = []
         self._active_lookups = 0
+        self._closed = False
+        self.bind("<Destroy>", self._on_destroy, add="+")
 
         self.title("Multi Scan")
         self.minsize(560, 480)
@@ -94,8 +102,8 @@ class MultiScanDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             self.container,
             text=(
-                "Scan a UPC, then scan its location. Press Enter after each scan "
-                "to move to the next step."
+                "Scan a UPC, EAN, or ASIN, then scan its location. Press Enter "
+                "after each scan to move to the next step."
             ),
             text_color="gray60",
             anchor="w",
@@ -109,7 +117,7 @@ class MultiScanDialog(ctk.CTkToplevel):
 
         self.upc_entry = ctk.CTkEntry(
             scan_frame,
-            placeholder_text="Scan UPC barcode…",
+            placeholder_text="Scan UPC, EAN, or ASIN…",
             height=40,
             font=ctk.CTkFont(size=14),
         )
@@ -149,7 +157,13 @@ class MultiScanDialog(ctk.CTkToplevel):
         )
         self._save_btn.grid(row=0, column=2)
 
+    def _on_destroy(self, event) -> None:
+        if event.widget is self:
+            self._closed = True
+
     def _focus_scan_entry(self) -> None:
+        if self._closed:
+            return
         self.upc_entry.select_range(0, "end")
         self.upc_entry.focus_set()
 
@@ -165,6 +179,8 @@ class MultiScanDialog(ctk.CTkToplevel):
             return
 
         def focus() -> None:
+            if self._closed or not entry.winfo_exists():
+                return
             self.list_scroll.refresh_scroll_region()
             content_height = self.list_scroll.content.winfo_height()
             if content_height > 0:
@@ -196,16 +212,17 @@ class MultiScanDialog(ctk.CTkToplevel):
         return item.location if item else ""
 
     def _on_scan(self) -> None:
-        upc = normalize_upc(self.upc_entry.get().strip())
-        if not upc:
+        normalized = normalize_product_code(self.upc_entry.get().strip())
+        if not normalized:
             dialogs.show_warning(
                 self,
-                "Invalid UPC",
-                "Enter a valid UPC barcode (8–14 digits).",
+                "Invalid product code",
+                "Enter a valid UPC/EAN/GTIN (8–14 digits) or ASIN (B plus 9 letters/digits).",
             )
             return
+        upc, _code_type = normalized
 
-        existing = self.store.find_by_upc(upc)
+        existing = self.store.find_by_identifier(upc)
         if existing:
             line = self._find_line(upc)
             if line and line.kind == "existing":
@@ -253,19 +270,26 @@ class MultiScanDialog(ctk.CTkToplevel):
         self._update_save_state()
 
         def worker() -> None:
-            result = lookup_upc(line.upc)
-            self.after(0, lambda: self._on_lookup_complete(line.row_id, result))
+            result = lookup_product(line.upc)
+            if self._closed:
+                return
+            try:
+                self.after(0, lambda: self._on_lookup_complete(line.row_id, result))
+            except (RuntimeError, tk.TclError):
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_lookup_complete(self, row_id: str, result: UPCLookupResult) -> None:
+        if self._closed:
+            return
         self._active_lookups = max(0, self._active_lookups - 1)
         line = next((l for l in self._lines if l.row_id == row_id), None)
         if line is None:
             self._update_save_state()
             return
 
-        existing = self.store.find_by_upc(result.upc if result.found else line.upc)
+        existing = self.store.find_by_identifier(result.upc if result.found else line.upc)
         location_line: ScanLine | None = None
         if existing:
             self._remove_line_ui(line)
@@ -396,21 +420,22 @@ class MultiScanDialog(ctk.CTkToplevel):
             return f"New{qty} — {line.name}"
         if line.kind == "pending":
             return f"Pending{qty} — {line.name}"
-        return f"Error — UPC {line.upc}"
+        return f"Error — {product_code_label(line.upc)} {line.upc}"
 
     def _line_detail(self, line: ScanLine) -> str:
+        code_label = product_code_label(line.upc)
         if line.kind == "existing":
-            return f"Already in inventory · UPC {line.upc}"
+            return f"Already in inventory · {code_label} {line.upc}"
         if line.kind == "new":
             brand = line.result.brand if line.result else ""
-            parts = [f"UPC {line.upc}"]
+            parts = [f"{code_label} {line.upc}"]
             if brand:
                 parts.append(brand)
             return " · ".join(parts)
         if line.kind == "pending":
-            return f"UPC {line.upc} · looking up online…"
+            return f"{code_label} {line.upc} · looking up online…"
         error = line.result.error if line.result and line.result.error else "Product not found"
-        return f"UPC {line.upc} · {error}"
+        return f"{code_label} {line.upc} · {error}"
 
     def _refresh_line(self, line: ScanLine) -> None:
         if line.name_label:

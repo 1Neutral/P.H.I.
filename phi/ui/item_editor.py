@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import tkinter as tk
 from datetime import date
 from pathlib import Path
 from tkinter import filedialog
@@ -16,7 +17,12 @@ from phi.storage import InventoryStore
 from phi.ui import dialogs
 from phi.ui.images import THUMB_EDITOR, load_ctk_image
 from phi.ui.window_utils import bind_resize_refresh, refresh_layout
-from phi.upc_lookup import UPCLookupResult, lookup_upc, normalize_upc
+from phi.upc_lookup import (
+    UPCLookupResult,
+    lookup_product,
+    normalize_product_code,
+    product_code_label,
+)
 
 EDITOR_GEOMETRY = "900x720"
 
@@ -41,6 +47,12 @@ class ItemEditor(ctk.CTkToplevel):
         self._thumb_image: Optional[ctk.CTkImage] = None
         self._unit_rows: list[dict] = []
         self._lookup_running = False
+        self._closed = False
+        self.bind(
+            "<Destroy>",
+            lambda e: setattr(self, "_closed", True) if e.widget is self else None,
+            add="+",
+        )
 
         title = "Add Item" if is_new else f"Edit — {item.name or 'Item'}"
         self.title(title)
@@ -71,7 +83,7 @@ class ItemEditor(ctk.CTkToplevel):
 
             ctk.CTkLabel(
                 upc_frame,
-                text="Scan or enter UPC",
+                text="Scan or enter UPC / EAN / ASIN",
                 font=ctk.CTkFont(size=14, weight="bold"),
                 anchor="w",
             ).grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 4))
@@ -87,7 +99,7 @@ class ItemEditor(ctk.CTkToplevel):
 
             self.upc_entry = ctk.CTkEntry(
                 upc_frame,
-                placeholder_text="UPC barcode (8–14 digits)",
+                placeholder_text="UPC / EAN / GTIN (8–14 digits) or ASIN (B…)",
                 height=36,
             )
             self.upc_entry.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 12))
@@ -132,7 +144,7 @@ class ItemEditor(ctk.CTkToplevel):
         if not self.is_new and self.item.upc:
             ctk.CTkLabel(
                 header,
-                text=f"UPC: {self.item.upc}",
+                text=f"{product_code_label(self.item.upc)}: {self.item.upc}",
                 text_color="gray60",
                 anchor="w",
             ).grid(row=2, column=1, sticky="w")
@@ -253,10 +265,11 @@ class ItemEditor(ctk.CTkToplevel):
             self.upc_entry.focus_set()
 
     def _handle_existing_upc(self, existing: Item) -> None:
+        code_label = product_code_label(existing.upc or "")
         if dialogs.ask_yes_no(
             self,
             "Already in inventory",
-            f"'{existing.name}' is already tracked with this UPC.\n\n"
+            f"'{existing.name}' is already tracked with this {code_label}.\n\n"
             "Add another unit to that item?",
         ):
             existing.units.append(Unit(id=new_id()))
@@ -269,16 +282,17 @@ class ItemEditor(ctk.CTkToplevel):
         if not self.is_new or self._lookup_running:
             return
 
-        upc = normalize_upc(self.upc_entry.get().strip())
-        if not upc:
+        normalized = normalize_product_code(self.upc_entry.get().strip())
+        if not normalized:
             dialogs.show_warning(
                 self,
-                "Invalid UPC",
-                "Enter a valid UPC barcode (8–14 digits).",
+                "Invalid product code",
+                "Enter a valid UPC/EAN/GTIN (8–14 digits) or ASIN (B plus 9 letters/digits).",
             )
             return
+        code, _code_type = normalized
 
-        existing = self.store.find_by_upc(upc)
+        existing = self.store.find_by_identifier(code)
         if existing:
             self._handle_existing_upc(existing)
             return
@@ -286,22 +300,29 @@ class ItemEditor(ctk.CTkToplevel):
         self._set_lookup_busy(True)
 
         def worker() -> None:
-            result = lookup_upc(upc)
-            self.after(0, lambda: self._on_lookup_complete(result))
+            result = lookup_product(code)
+            if self._closed:
+                return
+            try:
+                self.after(0, lambda: self._on_lookup_complete(result))
+            except (RuntimeError, tk.TclError):
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_lookup_complete(self, result: UPCLookupResult) -> None:
+        if self._closed:
+            return
         self._set_lookup_busy(False)
         if not result.found:
             dialogs.show_error(
                 self,
-                "UPC lookup failed",
+                f"{result.code_type} lookup failed",
                 result.error or "Product not found.",
             )
             return
 
-        existing = self.store.find_by_upc(result.upc)
+        existing = self.store.find_by_identifier(result.upc)
         if existing:
             self._handle_existing_upc(existing)
             return
@@ -449,9 +470,9 @@ class ItemEditor(ctk.CTkToplevel):
         self.item.labels = self.labels_entry.get().strip()
         self.item.units = units
         if not self.item.upc and self.is_new and hasattr(self, "upc_entry"):
-            upc = normalize_upc(self.upc_entry.get())
-            if upc:
-                self.item.upc = upc
+            normalized = normalize_product_code(self.upc_entry.get())
+            if normalized:
+                self.item.upc = normalized[0]
         return self.item
 
     def _refresh_status(self) -> None:

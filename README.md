@@ -7,10 +7,10 @@ A local desktop app for tracking your walk-in pantry (and beyond). Each item has
 - **Per-unit tracking** — optional expiration (YYYY-MM-DD) and notes for every unit
 - **Location** — one location per item (not per unit)
 - **Brand, categories, labels** — optional fields to distinguish similar items; UPC lookup fills them automatically
-- **Search** — matches name, location, brand, categories, labels, and UPC
+- **Search** — matches name, location, brand, categories, labels, UPC/EAN/GTIN, and ASIN
 - **Expandable items** — click an item to show its units; add/remove units inline; Edit/Duplicate/Remove appear when expanded
 - **Photos** — upload an image per item (stored in `data/images/`)
-- **UPC lookup** — on Add Item, scan or type a UPC to look up product name, brand, categories, labels, and photo online (requires internet)
+- **UPC / EAN / ASIN lookup** — scan a UPC, EAN-8, EAN-13, GTIN-14, or Amazon ASIN to look up product details and a photo online (requires internet; ASIN lookup is best-effort because Amazon may block automated requests)
 - **Edit / Remove / Duplicate** — duplicate opens the editor on a copy (handy for similar items)
 - **Expiration tinting** (based on the *oldest* expiration among units):
   - **Blue** — not expired, or no expiration dates

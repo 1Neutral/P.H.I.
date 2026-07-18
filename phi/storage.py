@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 
 from phi.models import Inventory, Item
-from phi.upc_lookup import barcode_variants
+from phi.upc_lookup import barcode_variants, normalize_asin
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 INVENTORY_FILE = "inventory.json"
@@ -73,6 +73,16 @@ class InventoryStore:
             if item.upc and set(barcode_variants(item.upc)) & search_variants:
                 return item
         return None
+
+    def find_by_identifier(self, identifier: str) -> Item | None:
+        """Find an item by either UPC/EAN variants or exact ASIN."""
+        asin = normalize_asin(identifier)
+        if asin:
+            for item in self._inventory.items:
+                if item.upc and normalize_asin(item.upc) == asin:
+                    return item
+            return None
+        return self.find_by_upc(identifier)
 
     def store_image(self, source_path: Path, item_id: str) -> str:
         """Copy an image into data/images and return the stored relative path."""
